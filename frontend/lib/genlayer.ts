@@ -1,57 +1,92 @@
 import { createClient } from "genlayer-js";
 import { studionet } from "genlayer-js/chains";
-import { ExecutionResult, TransactionStatus } from "genlayer-js/types";
+import {
+  ExecutionResult,
+  TransactionHash,
+  TransactionStatus,
+} from "genlayer-js/types";
 
 export const CONTRACT_ADDRESS =
   process.env.NEXT_PUBLIC_GENLAYER_CONTRACT_ADDRESS || "";
 
 type EthereumProvider = {
-  request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+  request: (args: {
+    method: string;
+    params?: unknown[];
+  }) => Promise<unknown>;
 };
 
 declare global {
-  interface Window { ethereum?: EthereumProvider; }
+  interface Window {
+    ethereum?: EthereumProvider;
+  }
 }
 
 function getProvider() {
   if (typeof window === "undefined" || !window.ethereum) {
     throw new Error("MetaMask or another EIP-1193 wallet is required.");
   }
+
   return window.ethereum;
 }
 
 export async function connectWallet() {
   if (!CONTRACT_ADDRESS) {
-    throw new Error("Set NEXT_PUBLIC_GENLAYER_CONTRACT_ADDRESS in frontend/.env.local.");
+    throw new Error(
+      "NEXT_PUBLIC_GENLAYER_CONTRACT_ADDRESS is not configured."
+    );
   }
+
   const provider = getProvider();
+
   const accounts = (await provider.request({
     method: "eth_requestAccounts",
   })) as string[];
-  if (!accounts?.[0]) throw new Error("No wallet account was returned.");
+
+  if (!accounts?.[0]) {
+    throw new Error("No wallet account was returned.");
+  }
+
+  const address = accounts[0] as `0x${string}`;
 
   const client = createClient({
     chain: studionet,
-    account: accounts[0] as `0x${string}`,
+    account: address,
     provider,
   });
+
   await client.connect("studionet");
 
-  return { address: accounts[0] as `0x${string}`, client };
+  return {
+    address,
+    client,
+  };
 }
 
 export function getReadClient() {
   if (!CONTRACT_ADDRESS) {
-    throw new Error("Set NEXT_PUBLIC_GENLAYER_CONTRACT_ADDRESS in frontend/.env.local.");
+    throw new Error(
+      "NEXT_PUBLIC_GENLAYER_CONTRACT_ADDRESS is not configured."
+    );
   }
-  return createClient({ chain: studionet });
+
+  return createClient({
+    chain: studionet,
+  });
 }
 
 export function getWalletClient(account: `0x${string}`) {
   if (!CONTRACT_ADDRESS) {
-    throw new Error("Set NEXT_PUBLIC_GENLAYER_CONTRACT_ADDRESS in frontend/.env.local.");
+    throw new Error(
+      "NEXT_PUBLIC_GENLAYER_CONTRACT_ADDRESS is not configured."
+    );
   }
-  return createClient({ chain: studionet, account, provider: getProvider() });
+
+  return createClient({
+    chain: studionet,
+    account,
+    provider: getProvider(),
+  });
 }
 
 export async function waitForDecision(
@@ -59,18 +94,18 @@ export async function waitForDecision(
   hash: `0x${string}`,
   onStatus?: (status: string) => void,
 ) {
-  for (let i = 0; i < 240; i += 1) {
-    try {
-      const lifecycle = await client.advanced.getTransactionLifecycle({ hash });
-      const status = lifecycle?.status || "PENDING";
-      onStatus?.(String(status));
-      if (status === "ACCEPTED" || status === "FINALIZED" || status === "REJECTED") {
-        return lifecycle;
-      }
-    } catch {}
-    await new Promise((resolve) => setTimeout(resolve, 5000));
-  }
-  throw new Error("Timed out while waiting for the GenLayer decision.");
+  onStatus?.("WAITING_FOR_DECISION");
+
+  const transaction = await client.waitForTransactionReceipt({
+    hash: hash as TransactionHash,
+    status: TransactionStatus.ACCEPTED,
+    interval: 5000,
+    retries: 240,
+  });
+
+  onStatus?.("ACCEPTED");
+
+  return transaction;
 }
 
 export async function waitForReceipt(
@@ -78,20 +113,22 @@ export async function waitForReceipt(
   hash: `0x${string}`,
 ) {
   return client.waitForTransactionReceipt({
-    hash,
+    hash: hash as TransactionHash,
     status: TransactionStatus.FINALIZED,
     interval: 5000,
     retries: 240,
   });
 }
 
-export function assertSuccessfulReturn(receipt: { execution_result?: string }) {
+export function assertSuccessfulReturn(receipt: {
+  txExecutionResultName?: ExecutionResult;
+}) {
   if (
-    receipt.execution_result &&
-    receipt.execution_result !== ExecutionResult.FINISHED_WITH_RETURN
+    receipt.txExecutionResultName &&
+    receipt.txExecutionResultName !== ExecutionResult.FINISHED_WITH_RETURN
   ) {
     throw new Error(
-      `Transaction finished with execution result: ${receipt.execution_result}`,
+      `Transaction execution failed: ${receipt.txExecutionResultName}`,
     );
   }
 }

@@ -44,12 +44,19 @@ export default function Home() {
     catch(e){ setError(e instanceof Error?e.message:String(e)); }
   }
 
-  async function sendTransaction(functionName:string,args:unknown[],message:string){
+async function sendTransaction(
+  functionName: string,
+  args: any[],
+  message: string,
+) {
     if(!account) throw new Error("Connect a Studionet wallet first.");
     const client=getWalletClient(account as `0x${string}`);
-    const hash=await client.writeContract({
-      address:CONTRACT_ADDRESS as `0x${string}`, functionName, args,
-    });
+ const hash = await client.writeContract({
+  address: CONTRACT_ADDRESS as `0x${string}`,
+  functionName,
+  args,
+  value: BigInt(0),
+});
     setTx({hash:String(hash),status:"SUBMITTED",message:"Transaction submitted. Waiting for GenLayer consensus..."});
     const readClient=getReadClient();
     await waitForDecision(readClient,hash as `0x${string}`,(status)=>setTx({hash:String(hash),status,message:`GenLayer lifecycle status: ${status}`}));
@@ -59,18 +66,48 @@ export default function Home() {
     return receipt;
   }
 
-  async function handleCreate(e:FormEvent){
-    e.preventDefault();
-    try {
-      setError("");
-      const receipt=await sendTransaction("create_milestone",[
-        account,title,requirements,evidenceUrl,reward,new Date(deadline).toISOString()
-      ],"Milestone created and finalized.");
-      if(typeof receipt.return_value==="string"){
-        setMilestoneId(receipt.return_value); setLookupId(receipt.return_value);
-      }
-    } catch(e){setError(e instanceof Error?e.message:String(e));}
+ async function handleCreate(e: FormEvent) {
+  e.preventDefault();
+
+  try {
+    setError("");
+
+    await sendTransaction(
+      "create_milestone",
+      [
+        account,
+        title,
+        requirements,
+        evidenceUrl,
+        reward,
+        new Date(deadline).toISOString(),
+      ],
+      "Milestone created and finalized.",
+    );
+
+    // Read the contributor's milestones and automatically select the newest one.
+    const result = await getReadClient().readContract({
+      address: CONTRACT_ADDRESS as `0x${string}`,
+      functionName: "get_milestones_for_user",
+      args: [account],
+    });
+
+    const milestones = result as Milestone[];
+
+    if (milestones.length > 0) {
+      const newest = milestones.reduce((latest, current) =>
+        Number(current.milestone_id) > Number(latest.milestone_id)
+          ? current
+          : latest,
+      );
+
+      setMilestoneId(newest.milestone_id);
+      setLookupId(newest.milestone_id);
+    }
+  } catch (e) {
+    setError(e instanceof Error ? e.message : String(e));
   }
+}
 
   async function handleSubmit(e:FormEvent){
     e.preventDefault();
